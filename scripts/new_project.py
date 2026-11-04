@@ -132,11 +132,11 @@ def main():
     print(f"工程：{root}")
     print(f"画幅：{w}×{h} + 字幕条 {cfg['captionHeight']}")
     print(f"幕数：{len(scenes)}（{', '.join(s['id'] for s in scenes)}）")
-    print("\n下一步：")
+    print("\n下一步（依赖已随工程拷贝，不用 npm i）：")
     print(f"  cd {root}")
-    print("  npm i jpeg-js pngjs mpg123-decoder      # 首次")
-    print("  node <skill>/scripts/trace_paths.js --in scenes --out paths")
+    print(f"  node {SKILL / 'scripts' / 'trace_paths.js'} --in scenes --out paths")
     print("  python3 serve.py 8010")
+    print(f"  python3 {SKILL / 'scripts' / 'check_project.py'} --root .")
 
 
 if __name__ == "__main__":
