@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>白板手绘讲解</title>
+<style>
+  :root { --bg:#15161a; --panel:#1e2026; --line:#2c2f37; --txt:#e7e8ea; --mut:#8d93a0; --accent:#e97036; --paper:#f6ecd8; }
+  * { box-sizing:border-box; }
+  html { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+         display:flex; height:100vh; height:100dvh; overflow:hidden; }
+  /* 三栏：左幕列表 / 中画布 / 底按钮条。aside 与 .bar 都不许被压缩，
+     否则 100% 缩放下底部按钮会被挤出视口。 */
+  aside { flex:0 0 196px; background:var(--panel); border-right:1px solid var(--line);
+          padding:12px 10px; overflow:auto; min-height:0; }
+  aside h1 { font-size:13px; margin:0 0 2px; font-weight:600; }
+  aside p { color:var(--mut); font-size:11px; margin:0 0 10px; }
+  .scene { padding:6px 8px; border-radius:7px; cursor:pointer; border:1px solid transparent; margin-bottom:4px; }
+  .scene:hover { background:#24262d; }
+  .scene.on { background:#2a2119; border-color:var(--accent); }
+  .scene b { font-weight:600; font-size:12px; }
+  .scene span { display:block; color:var(--mut); font-size:10px; line-height:1.4; }
+  main { flex:1 1 auto; display:flex; flex-direction:column; min-width:0; min-height:0; }
+  .stage { flex:1 1 auto; position:relative; display:flex; align-items:center; justify-content:center;
+           padding:10px; min-height:0; overflow:hidden; }
+  canvas { display:block; max-width:100%; max-height:100%; border-radius:4px; background:var(--paper); box-shadow:0 12px 44px rgba(0,0,0,.55); }
+  #gate { position:absolute; inset:10px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+          gap:12px; background:rgba(10,10,12,.28); border-radius:6px; cursor:pointer; transition:opacity .25s; }
+  #gate.hide { opacity:0; pointer-events:none; }
+  #gate b { background:var(--accent); color:#fff; font-size:18px; font-weight:600; letter-spacing:.5px;
+            padding:12px 26px; border-radius:999px; box-shadow:0 10px 30px rgba(233,112,54,.45); }
+  #gate small { color:#e2e4e8; font-size:12px; text-shadow:0 1px 6px rgba(0,0,0,.6); }
+  .bar { flex:0 0 auto; border-top:1px solid var(--line); padding:8px 14px 9px; background:var(--panel); }
+  .ctl { display:flex; align-items:center; gap:8px; }
+  button { background:#2b2f38; color:var(--txt); border:1px solid var(--line); border-radius:6px;
+           padding:5px 11px; cursor:pointer; font-size:12px; white-space:nowrap; }
+  button:hover { border-color:#4a4f5b; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  input[type=range] { flex:1; accent-color:var(--accent); min-width:60px; }
+  .t { color:var(--mut); font-variant-numeric:tabular-nums; font-size:11px; min-width:88px; text-align:right; }
+  .ctl.exp { margin-top:6px; padding-top:6px; border-top:1px dashed var(--line); }
+  .t.wide { min-width:0; text-align:left; flex:1; white-space:normal; word-break:break-all;
+            line-height:1.45; max-height:3em; overflow:auto; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .err { color:#ff8a7a; font-size:13px; padding:24px; }
+</style>
+</head>
+<body>
+<aside>
+  <h1 id="docTitle">白板讲解</h1>
+  <p id="docSub"></p>
+  <div id="list"></div>
+</aside>
+<main>
+  <div class="stage">
+    <canvas id="cv"></canvas>
+    <div id="gate"><b id="gateBtn">▶ 播放全片</b><small>连播 · 配音 · 字幕</small></div>
+  </div>
+  <audio id="au" preload="auto"></audio>
+  <div class="bar">
+    <div class="ctl">
+      <button id="play" class="primary">▶ 播放</button>
+      <button id="prev">上一幕</button>
+      <button id="next">下一幕</button>
+      <input type="range" id="seek" min="0" max="1000" value="0">
+      <span class="t" id="time">0.0s / 0.0s</span>
+    </div>
+    <div class="ctl exp">
+      <button id="shot">截一帧看版式</button>
+      <button id="expSample">导出样片 30 秒</button>
+      <button id="expFull" class="primary">导出全片</button>
+      <a href="voice.html" style="color:#e97036;font-size:13px;text-decoration:none;white-space:nowrap">换配音</a>
+      <span id="expTip" class="t wide"></span>
+    </div>
+  </div>
+</main>
+<script>
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const comp = document.createElement('canvas'), cctx = comp.getContext('2d');
+const au = document.getElementById('au');
+
+/* ---------- 工程配置（project.json） ---------- */
+const CFG = {
+  title: '白板讲解', subtitle: '', slug: 'movie',
+  width: 1024, height: 1536, captionHeight: 220,
+  penWidth: 11, captionSize: 36, fit: 0.96, headingScale: 0.7,
+  fps: 25, exportScale: 0.85, kbps: 2600,
+  hand: 'assets/hand.png', handTip: [108, 62], handWidth: 0.30,
+  paper: '#f6ecd8', drawSpeed: 700, minDrawMs: 16000
+};
+let W = CFG.width, H = CFG.height, CAP = CFG.captionHeight, CH = H + CAP;
+let PEN_W = CFG.penWidth, FIT = CFG.fit;
+let HAND_TIP = CFG.handTip, HAND_W = CFG.handWidth;
+
+const hand = new Image();
+hand.src = CFG.hand;
+
+const S = { playlist:null, index:0, img:null, cues:null, t:0, playing:false, last:0, hasAudio:false,
+            paper:CFG.paper, objUrl:null, exportScale:1, audioMs:0,
+            path:null, ri:0, li:0, maskP:0, drawMs:0 };
+
+const EXP = { rec:null, chunks:[], ac:null, dest:null, node:null, busy:false, stop:false,
+              lastBlob:null, lastName:'' };
+
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+const smooth = p => p * p * (3 - 2 * p);
+const totalMs = () => Math.max(
+  S.cues ? S.cues.durationMs + 600 : 0,
+  S.audioMs ? S.audioMs + 120 : 0
+);
+
+/* ---------- 镜头：整幅图等比缩小后轻微呼吸，任何时刻都不裁画面 ---------- */
+function cameraAt(p) {
+  const z = 1 + 0.035 * (0.5 - 0.5 * Math.cos(p * Math.PI * 2));
+  return { z };
+}
+
+/* ---------- 笔迹显影 ---------- */
+const inkCv = document.createElement('canvas');
+const inkCtx = inkCv.getContext('2d', { willReadFrequently: true });
+const maskCv = document.createElement('canvas');
+const maskCtx = maskCv.getContext('2d');
+
+// 抠纸底：离纸色近的像素变透明，墨色/彩色保留，边缘按距离做软过渡。
+// 必须抠干净，否则没画到的地方会先露出一整张图的方框。
+function buildInk(img) {
+  inkCv.width = W; inkCv.height = H;
+  inkCtx.clearRect(0, 0, W, H);
+  inkCtx.drawImage(img, 0, 0, W, H);
+  const id = inkCtx.getImageData(0, 0, W, H), d = id.data;
+  // 纸色取四角平均，避免插图边角有装饰时取错
+  const at = (x, y) => { const o = (y * W + x) * 4; return [d[o], d[o+1], d[o+2]]; };
+  const cs = [at(3,3), at(W-4,3), at(3,H-4), at(W-4,H-4)];
+  const pr = (cs[0][0]+cs[1][0]+cs[2][0]+cs[3][0])/4;
+  const pg = (cs[0][1]+cs[1][1]+cs[2][1]+cs[3][1])/4;
+  const pb = (cs[0][2]+cs[1][2]+cs[2][2]+cs[3][2])/4;
+  S.paper = `rgb(${pr|0},${pg|0},${pb|0})`;
+  document.documentElement.style.setProperty('--paper', S.paper);
+  for (let i = 0; i < d.length; i += 4) {
+    const dist = Math.max(Math.abs(d[i] - pr), Math.abs(d[i + 1] - pg), Math.abs(d[i + 2] - pb));
+    const a = (dist - 9) / 15;
+    d[i + 3] = a <= 0 ? 0 : a >= 1 ? 255 : (a * 255) | 0;
+  }
+  inkCtx.putImageData(id, 0, 0);
+
+  maskCv.width = W; maskCv.height = H;
+  maskCtx.clearRect(0, 0, W, H);
+  comp.width = W; comp.height = H;
+  S.ri = 0; S.li = 0; S.maskP = 0;
+}
+
+/* ---------- 笔迹：沿每个图形的最外一圈描，描完整块直接显影 ---------- */
+function fillRegion(reg) {
+  const pa = new Path2D();
+  for (const r of reg.rings) {
+    pa.moveTo(r[0], r[1]);
+    for (let i = 2; i < r.length; i += 2) pa.lineTo(r[i], r[i + 1]);
+    pa.closePath();
+  }
+  maskCtx.fillStyle = '#fff';
+  maskCtx.fill(pa, 'evenodd');
+}
+
+function strokeRing(reg, from, to) {
+  const q = reg.ring, n = q.length / 2;
+  if (to <= from) return;
+  maskCtx.strokeStyle = '#fff';
+  maskCtx.lineWidth = PEN_W;
+  maskCtx.lineCap = 'round';
+  maskCtx.lineJoin = 'round';
+  maskCtx.beginPath();
+  maskCtx.moveTo(q[(from % n) * 2], q[(from % n) * 2 + 1]);
+  for (let i = from + 1; i <= to; i++) {
+    const k = i % n;
+    maskCtx.lineTo(q[k * 2], q[k * 2 + 1]);
+  }
+  maskCtx.stroke();
+}
+
+function resetPen() {
+  maskCtx.clearRect(0, 0, W, H);
+  S.ri = 0; S.li = 0; S.maskP = 0;
+}
+
+function stampTo(p) {
+  const R = S.path.regions;
+  if (p < S.maskP) resetPen();
+  while (S.ri < R.length) {
+    const reg = R[S.ri], n = reg.ring.length / 2;
+    if (p < reg.t0) break;
+    if (p >= reg.t1) {
+      if (S.li < n) { strokeRing(reg, S.li, n); S.li = n; }
+      fillRegion(reg);
+      S.ri++; S.li = 0;
+      continue;
+    }
+    const f = (p - reg.t0) / Math.max(1e-6, reg.t1 - reg.t0);
+    const upto = Math.min(n, Math.floor(f * n));
+    if (upto > S.li) { strokeRing(reg, S.li, upto); S.li = upto; }
+    break;
+  }
+  S.maskP = p;
+}
+
+// 笔尖位置：正在描的那一点；两笔之间沿直线滑过去
+function penAt(p) {
+  const R = S.path.regions;
+  if (!R.length) return [W / 2, H / 2];
+  if (p <= R[0].t0) return [R[0].ring[0], R[0].ring[1]];
+  let lo = 0, hi = R.length - 1;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (R[m].t1 <= p) lo = m + 1; else hi = m; }
+  const reg = R[lo], n = reg.ring.length / 2;
+  if (p < reg.t0) {
+    const prev = R[lo - 1];
+    const pn = prev.ring.length / 2;
+    const ax = prev.ring[(pn - 1) * 2], ay = prev.ring[(pn - 1) * 2 + 1];
+    const bx = reg.ring[0], by = reg.ring[1];
+    const f = clamp((p - prev.t1) / Math.max(1e-6, reg.t0 - prev.t1), 0, 1);
+    const e = smooth(f);
+    return [ax + (bx - ax) * e, ay + (by - ay) * e];
+  }
+  const f = clamp((p - reg.t0) / Math.max(1e-6, reg.t1 - reg.t0), 0, 1);
+  const i = Math.min(n - 1, Math.floor(f * n));
+  return [reg.ring[i * 2], reg.ring[i * 2 + 1]];
+}
+
+function drawPhoto(t) {
+  const dur = Math.max(1, totalMs());
+  const cam = cameraAt(clamp(t / dur, 0, 1));
+  const k = FIT * cam.z;
+  const dw = W * k, dh = H * k;
+  const dx = (W - dw) / 2, dy = (H - dh) / 2;
+
+  // 静止停在开头时给完整画面（缩略图别是白纸）
+  let p = 1;
+  if (S.path && S.drawMs > 0) {
+    p = clamp((t - 220) / S.drawMs, 0, 1);
+    if (!S.playing && t < 220 && !EXP.busy) p = 1;
+  }
+
+  if (p >= 1) {
+    if (S.path && S.maskP < 1) stampTo(1);
+    ctx.drawImage(inkCv, 0, 0, W, H, dx, dy, dw, dh);
+  } else {
+    stampTo(p);
+    cctx.clearRect(0, 0, W, H);
+    cctx.globalCompositeOperation = 'source-over';
+    cctx.drawImage(inkCv, 0, 0);
+    cctx.globalCompositeOperation = 'destination-in';
+    cctx.drawImage(maskCv, 0, 0);
+    cctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(comp, 0, 0, W, H, dx, dy, dw, dh);
+  }
+
+  // 手：笔尖就是正在显影的那一点
+  if (S.path && p > 0 && p < 1 && hand.complete) {
+    const [tx, ty] = penAt(p);
+    const s = (W * HAND_W) / hand.width;
+    const ha = clamp(Math.min(p / 0.05, (1 - p) / 0.05), 0, 1);
+    ctx.save();
+    ctx.globalAlpha = ha;
+    ctx.shadowColor = 'rgba(60,40,20,.20)';
+    ctx.shadowBlur = 14; ctx.shadowOffsetY = 8;
+    ctx.drawImage(hand, tx - HAND_TIP[0] * s, ty - HAND_TIP[1] * s, hand.width * s, hand.height * s);
+    ctx.restore();
+  }
+}
+
+/* ---------- 字幕 ---------- */
+function roundRect(g, x, y, w, h, r) {
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+}
+function drawCaption(lines) {
+  if (!lines || !lines.length) return;
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const size = CFG.captionSize;
+  ctx.font = `600 ${size}px "PingFang SC","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif`;
+  const lh = size * 1.55;
+  const cy = H + CAP / 2;
+  const top = cy - (lines.length - 1) * lh / 2;
+  const maxW = Math.max(...lines.map(l => ctx.measureText(l).width));
+  ctx.globalAlpha = .92; ctx.fillStyle = S.paper;
+  roundRect(ctx, W/2 - maxW/2 - 34, top - lh/2 - 10, maxW + 68, lh * lines.length + 20, 18);
+  ctx.fill();
+  ctx.globalAlpha = 1; ctx.fillStyle = '#43332a';
+  lines.forEach((ln, i) => ctx.fillText(ln, W/2, top + i * lh));
+  ctx.restore();
+}
+
+function render() {
+  if (!S.img) return;
+  const k = S.exportScale || 1;
+  // H.264 只吃偶数边长，奇数会在编码时被裁掉一行/一列
+  const CW = Math.round(W * k / 2) * 2, CTH = Math.round(CH * k / 2) * 2;
+  if (cv.width !== CW || cv.height !== CTH) { cv.width = CW; cv.height = CTH; }
+  ctx.setTransform(CW / W, 0, 0, CTH / CH, 0, 0);
+
+  ctx.fillStyle = S.paper;
+  ctx.fillRect(0, 0, W, CH);
+
+  drawPhoto(S.t);
+
+  ctx.fillStyle = 'rgba(120,95,70,.10)';
+  ctx.fillRect(0, H, W, 1);
+
+  let capLines = null;
+  if (S.cues) {
+    const list = S.cues.cues || [];
+    const c = list.find(x => S.t >= x.startMs && S.t < x.endMs)
+           || (list.length && S.t < list[0].startMs ? list[0] : null);
+    if (c) capLines = c.lines;
+  }
+  drawCaption(capLines);
+
+  const tot = totalMs() || 1;
+  document.getElementById('seek').value = Math.round(clamp(S.t / tot, 0, 1) * 1000);
+  document.getElementById('time').textContent = `${(S.t/1000).toFixed(1)}s / ${(tot/1000).toFixed(1)}s`;
+}
+
+let rafPending = false;
+function scheduleRender() {
+  if (rafPending) return;
+  rafPending = true;
+  requestAnimationFrame(() => { rafPending = false; if (S.img) render(); });
+}
+
+function tick(ts) {
+  if (!S.playing) return;
+  if (S.hasAudio && !au.paused) {
+    S.t = au.currentTime * 1000;
+  } else {
+    if (!S.last) S.last = ts;
+    S.t += ts - S.last; S.last = ts;
+  }
+  if (S.t >= totalMs()) {
+    if (S.index < S.playlist.scenes.length - 1) { loadScene(S.index + 1, true); return; }
+    S.t = totalMs(); pause();
+  }
+  render();
+  requestAnimationFrame(tick);
+}
+function play() {
+  if (!S.cues) return;
+  const g = document.getElementById('gate'); if (g) g.classList.add('hide');
+  if (EXP.ac && EXP.ac.state === 'suspended') EXP.ac.resume();
+  if (S.t >= totalMs()) S.t = 0;
+  if (S.hasAudio) { au.currentTime = S.t / 1000; au.play().catch(() => { S.hasAudio = false; }); }
+  S.playing = true; S.last = 0;
+  document.getElementById('play').textContent = EXP.busy ? '■ 停止并保存' : '⏸ 暂停';
+  requestAnimationFrame(tick);
+}
+function pause() {
+  S.playing = false;
+  au.pause();
+  document.getElementById('play').textContent = '▶ 播放';
+  if (S.img) render();
+}
+
+/* ---------- 导出 ---------- */
+function audioGraph() {
+  if (!EXP.ac) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    EXP.ac = new AC();
+    EXP.dest = EXP.ac.createMediaStreamDestination();
+    EXP.node = EXP.ac.createMediaElementSource(au);
+    EXP.node.connect(EXP.dest);
+    EXP.node.connect(EXP.ac.destination);
+  }
+  if (EXP.ac.state === 'suspended') EXP.ac.resume();
+}
+function fmtClock(sec) {
+  const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+function setExportUI(busy, msg) {
+  ['expSample','expFull','prev','next','seek'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.disabled = busy;
+  });
+  const pb = document.getElementById('play');
+  if (pb) pb.textContent = busy ? '■ 停止并保存' : (S.playing ? '⏸ 暂停' : '▶ 播放');
+  const tip = document.getElementById('expTip');
+  if (tip) tip.textContent = msg || '';
+}
+
+async function shootFrame() {
+  const tip = document.getElementById('expTip');
+  try {
+    const blob = await new Promise(res => cv.toBlob(res, 'image/png'));
+    if (!blob) throw new Error('canvas 取不到图');
+    const name = `frame-${String(S.index + 1).padStart(2, '0')}-${(S.t / 1000).toFixed(1)}s.png`;
+    const r = await fetch('/upload', {
+      method: 'POST',
+      headers: { 'X-Filename': name, 'Content-Type': 'image/png' },
+      body: blob
+    });
+    if (!r.ok) throw new Error('上传失败 ' + r.status);
+    const saved = await r.json();
+    tip.innerHTML = `已存帧 <b>${saved.path}</b>`;
+  } catch (e) {
+    tip.textContent = '截帧失败：' + e.message;
+  }
+}
+
+async function exportMovie(limitSec) {
+  if (EXP.busy) return;
+  if (typeof MediaRecorder === 'undefined' || !cv.captureStream) {
+    alert('当前环境不支持 MediaRecorder / captureStream，无法内录。请用 Chrome 或 Edge 打开本页。');
+    return;
+  }
+  EXP.busy = true;
+  setExportUI(true, '准备中…');
+  try {
+    audioGraph();
+    if (EXP.ac.state !== 'running') await EXP.ac.resume();
+    pause();
+    S.exportScale = CFG.exportScale;
+    await loadScene(0, false);
+    S.t = 0;
+    S.playing = true;      // 录制的第一帧要是纸面，而不是"海报"整图
+    render();
+    await new Promise(r => setTimeout(r, 400));
+
+    const stream = cv.captureStream(CFG.fps);
+    EXP.dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+    const cands = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4',
+                   'video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
+    const mime = cands.find(m => MediaRecorder.isTypeSupported(m)) || '';
+    const rec = new MediaRecorder(stream, {
+      mimeType: mime || undefined,
+      videoBitsPerSecond: CFG.kbps * 1000,
+      audioBitsPerSecond: 128000
+    });
+    EXP.rec = rec; EXP.chunks = [];
+    rec.ondataavailable = e => { if (e.data && e.data.size) EXP.chunks.push(e.data); };
+    const stopped = new Promise(res => { rec.onstop = res; });
+    rec.start(1000);
+
+    const t0 = performance.now();
+    play();
+    await new Promise(r => setTimeout(r, 1200));
+    if (au.paused || au.currentTime < 0.3) throw new Error('配音没播起来（可能被浏览器拦截），请先手动点一次「播放」再导出');
+
+    let lastTick = -1;
+    await new Promise(resolve => {
+      const watch = () => {
+        const el = (performance.now() - t0) / 1000;
+        const atEnd = S.index >= S.playlist.scenes.length - 1 && S.t >= totalMs() - 30;
+        const sec = Math.floor(el);
+        if (sec !== lastTick) {
+          lastTick = sec;
+          setExportUI(true, `● 录制中 ${fmtClock(el)}` +
+            (limitSec ? ` / ${fmtClock(limitSec)}` : '') + '　（别切走这个页面，切走会掉帧）');
+        }
+        if (atEnd || EXP.stop || (limitSec && el >= limitSec)) return resolve();
+        requestAnimationFrame(watch);
+      };
+      watch();
+    });
+
+    pause();
+    if (rec.state !== 'inactive') rec.stop();
+    await stopped;
+    stream.getTracks().forEach(t => t.stop());
+
+    const blob = new Blob(EXP.chunks, { type: (mime || 'video/webm').split(';')[0] });
+    EXP.chunks = [];
+    if (!blob.size) throw new Error('录制没有产生任何数据，可能是浏览器拿不到画布画面（换 Chrome/Edge 再试）');
+    if (blob.size < 20000) throw new Error(`只录到 ${blob.size} 字节，录音/画面都没跟上，请刷新页面重试`);
+    const ext = mime.includes('mp4') ? 'mp4' : 'webm';
+    const name = `${CFG.slug}-${limitSec ? limitSec + 's' : 'full'}.${ext}`;
+    const url = URL.createObjectURL(blob);
+    EXP.lastBlob = blob; EXP.lastName = name;
+
+    let saved = null;
+    try {
+      const r = await fetch('/upload', {
+        method: 'POST',
+        headers: { 'X-Filename': name, 'Content-Type': blob.type || 'application/octet-stream' },
+        body: blob
+      });
+      if (r.ok) saved = await r.json();
+    } catch (e) { /* 走下载兜底 */ }
+
+    if (saved) {
+      const mb = (saved.size / 1048576).toFixed(0);
+      const where = saved.download || saved.path;
+      setExportUI(false, `已保存 ${where}`);
+      document.getElementById('expTip').innerHTML =
+        `已保存到 <b>${where}</b> · ${mb} MB` +
+        (saved.download ? `<br>工程内另有一份：${saved.path}` : '') +
+        `　<a href="out/${encodeURIComponent(saved.name)}" download="${saved.name}" style="color:var(--accent)">再下载一份</a>`;
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      return;
+    }
+
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 600000);
+    setExportUI(false, `已导出 ${name} · ${(blob.size / 1048576).toFixed(0)} MB`);
+    document.getElementById('expTip').innerHTML =
+      `已导出 ${name} · ${(blob.size / 1048576).toFixed(0)} MB　<a href="${url}" download="${name}" style="color:var(--accent)">没自动下载？点这里</a>`;
+  } catch (e) {
+    if (EXP.rec && EXP.rec.state !== 'inactive') { try { EXP.rec.stop(); } catch (err) {} }
+    setExportUI(false, '导出失败：' + e.message);
+  } finally {
+    EXP.busy = false; EXP.stop = false; EXP.rec = null;
+    S.exportScale = 1;
+    try { render(); } catch (e) {}
+  }
+}
+
+async function loadScene(i, autoplay) {
+  S.index = i; S.t = 0; S.img = null; S.cues = null; S.path = null; S.drawMs = 0; S.ri = 0; S.li = 0; S.maskP = 0;
+  au.pause(); S.hasAudio = false;
+  const sc = S.playlist.scenes[i];
+  const id = sc.id || `scene-${String(i + 1).padStart(2, '0')}`;
+  au.src = sc.audio || `audio/${id}.wav`;
+  au.onloadedmetadata = () => { S.hasAudio = true; S.audioMs = au.duration * 1000; };
+  au.onerror = () => { S.hasAudio = false; };
+  document.querySelectorAll('.scene').forEach((el, k) => el.classList.toggle('on', k === i));
+  try {
+    const cu = await fetch(sc.cues || `cues/${id}.json`)
+      .then(r => r.json()).catch(() => null);
+    S.cues = cu;
+    const img = new Image();
+    if (S.objUrl) { URL.revokeObjectURL(S.objUrl); S.objUrl = null; }
+    try {
+      const blob = await (await fetch(sc.image)).blob();
+      S.objUrl = URL.createObjectURL(blob);
+      img.src = S.objUrl;
+    } catch { img.src = sc.image; }
+    await img.decode();
+
+    S.img = img;
+    buildInk(img);
+
+    // 落笔路径：每个封闭图形描一圈、描完整块显影
+    try {
+      S.path = await fetch(sc.path || `paths/${id}.json`).then(r => r.json());
+      const L = S.path.len || 30000;
+      S.drawMs = Math.min(totalMs() * 0.95, Math.max(CFG.minDrawMs, L / CFG.drawSpeed * 1000));
+    } catch (e) { S.path = null; }
+
+    render();
+    if (autoplay) {
+      // 等配音的就绪信号再起播，否则这一幕会没声音
+      await Promise.race([
+        new Promise(r => { if (au.readyState >= 1) r(); else au.addEventListener('loadedmetadata', r, { once: true }); }),
+        new Promise(r => setTimeout(r, 700))
+      ]);
+      play();
+    } else pause();
+  } catch (e) {
+    document.querySelector('.stage').innerHTML =
+      `<div class="err">第 ${i+1} 幕加载失败：${e.message}<br>请用本地 HTTP 服务打开本页。</div>`;
+  }
+}
+
+(async function init() {
+  try {
+    const c = await (await fetch('project.json')).json();
+    Object.assign(CFG, c);
+    W = CFG.width; H = CFG.height; CAP = CFG.captionHeight; CH = H + CAP;
+    PEN_W = CFG.penWidth; FIT = CFG.fit;
+    HAND_TIP = CFG.handTip; HAND_W = CFG.handWidth;
+    hand.src = CFG.hand;
+    document.title = CFG.title || '白板讲解';
+    document.getElementById('docTitle').textContent = CFG.title || '';
+    document.getElementById('docSub').textContent = CFG.subtitle || '';
+    document.documentElement.style.setProperty('--paper', CFG.paper || '#f6ecd8');
+  } catch (e) {
+    document.querySelector('.stage').innerHTML = `<div class="err">读不到 project.json：${e.message}</div>`;
+    return;
+  }
+
+  try { S.playlist = await (await fetch('playlist.json')).json(); }
+  catch (e) {
+    document.querySelector('.stage').innerHTML = `<div class="err">读不到 playlist.json：${e.message}<br>请用本地 HTTP 服务打开本页。</div>`;
+    return;
+  }
+  const list = document.getElementById('list');
+  S.playlist.scenes.forEach((sc, i) => {
+    const d = document.createElement('div');
+    d.className = 'scene';
+    d.innerHTML = `<b>${sc.title}</b><span>第 ${i+1} 幕</span>`;
+    d.onclick = () => loadScene(i, false);
+    list.appendChild(d);
+  });
+  document.getElementById('play').onclick = () => {
+    if (EXP.busy) { EXP.stop = true; return; }
+    S.playing ? pause() : play();
+  };
+  document.getElementById('prev').onclick = () => loadScene(Math.max(0, S.index-1), false);
+  document.getElementById('next').onclick = () => loadScene(Math.min(S.playlist.scenes.length-1, S.index+1), false);
+  document.getElementById('seek').oninput = e => {
+    S.t = +e.target.value / 1000 * totalMs();
+    if (S.hasAudio) au.currentTime = S.t / 1000;
+    scheduleRender();          // 合并事件：倒拖时不必每个事件都重画一遍笔迹
+  };
+  document.getElementById('shot').onclick = shootFrame;
+  document.getElementById('expSample').onclick = () => exportMovie(30);
+  document.getElementById('expFull').onclick = () => exportMovie(0);
+
+  const gate = document.getElementById('gate');
+  gate.onclick = () => {
+    gate.classList.add('hide');
+    if (S.index !== 0 || S.t > 0) loadScene(0, true); else play();
+  };
+  cv.onclick = () => { if (!EXP.busy) { gate.classList.add('hide'); S.playing ? pause() : play(); } };
+  window.addEventListener('keydown', e => {
+    if (e.code === 'Space' && !EXP.busy) { e.preventDefault(); gate.classList.add('hide'); S.playing ? pause() : play(); }
+  });
+
+  await loadScene(0, false);
+
+  // 门上的总时长按音频实际长度算，不写死
+  const last = S.playlist.scenes[S.playlist.scenes.length - 1];
+  const sec = (last && last.endMs ? last.endMs : 0) / 1000;
+  if (sec > 0) {
+    document.getElementById('gateBtn').textContent =
+      `▶ 播放全片 ${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
+  }
+})();
+</script>
+</body>
+</html>

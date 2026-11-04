@@ -1,0 +1,21 @@
+{
+  "title": "白板讲解",
+  "subtitle": "竖版 · 点击切换",
+  "slug": "movie",
+  "width": 1024,
+  "height": 1536,
+  "captionHeight": 220,
+  "penWidth": 11,
+  "captionSize": 36,
+  "fit": 0.96,
+  "fps": 25,
+  "exportScale": 0.85,
+  "kbps": 2600,
+  "hand": "assets/hand.png",
+  "handTip": [108, 62],
+  "handWidth": 0.3,
+  "paper": "#f6ecd8",
+  "drawSpeed": 700,
+  "minDrawMs": 16000,
+  "copyToDownload": false
+}

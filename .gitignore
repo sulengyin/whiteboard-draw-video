@@ -1,0 +1,17 @@
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+*.swp
+
+# 工程产物（本仓库只存技能本体，不存任何一次制作的中间文件）
+out/
+preview/
+paths/
+cues/
+audio/
+*.mp4
+*.webm
+
+# Python
+__pycache__/
+*.pyc
