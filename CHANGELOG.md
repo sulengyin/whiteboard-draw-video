@@ -13,7 +13,7 @@
 
 ### 变更
 
-- `assets/player/serve.py`：下载目录不再硬编码 `/storage/Users/currentUser/Download`，
+- `assets/player/serve.py`：下载目录不再写死某台机器的绝对路径，
   改为 `WB_DOWNLOAD_DIR` 环境变量 + `~/Download`、`~/Downloads` 探测。
 - `.gitignore`：补音频、环境文件、密钥类规则；显式保护 `node_modules/` 不被通配波及。
 

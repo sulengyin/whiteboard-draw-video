@@ -31,7 +31,7 @@ PATTERNS = [
     ("AWS 密钥", re.compile(r"AKIA[0-9A-Z]{16}")),
     ("Bearer 令牌", re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{20,}")),
     ("私钥", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")),
-    ("本机绝对路径", re.compile(r"/storage/Users/[^/\s\"']+|/home/[a-z][a-z0-9_-]*/")),
+    ("本机绝对路径", re.compile(r"/storage/Users/[^/\s\"']+|/home/[a-z][a-z0-9_-]*/")),  # 反例，勿照抄
 ]
 
 # 这些行是文档里举例说明「不要这样做」，允许出现
