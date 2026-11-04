@@ -1,0 +1,38 @@
+# 变更记录
+
+版本号规则：改数据契约或调用方式 → major；新增能力 → minor；修问题、改文档 → patch。
+
+## [1.1.0] - 2026-11-04
+
+### 新增
+
+- `assets/分镜表模板.md`：拆幕用的五列表（幕 / 对应段落 / 时长 / 画面主线 / 元素绘制顺序），
+  含填写规则、切幕原则与自检清单。SKILL 第 0 步已引用。
+- `scripts/preflight.py`：提交前自检，扫手机号、密钥、令牌、私钥、本机绝对路径、>1 MB 文件与 Python 语法。
+- `tests/smoke.py`：拿真实插画跑路径生成，断言吻合率不低于阈值，用于改算法后回归。
+
+### 变更
+
+- `assets/player/serve.py`：下载目录不再硬编码 `/storage/Users/currentUser/Download`，
+  改为 `WB_DOWNLOAD_DIR` 环境变量 + `~/Download`、`~/Downloads` 探测。
+- `.gitignore`：补音频、环境文件、密钥类规则；显式保护 `node_modules/` 不被通配波及。
+
+### 文档
+
+- README 增加「维护规范」：分支、提交、版本、敏感信息、协作边界。
+
+## [1.0.1] - 2026-11-04
+
+### 修复
+
+- `new_project.py` 末尾仍提示 `npm i`，与「依赖随工程自带」不符；改为打印真实脚本绝对路径。
+
+## [1.0.0] - 2026-11-04
+
+### 首个版本
+
+- `scripts/`：素材解析、建工程、笔迹路径（含 IoU 自检）、离线截帧、出片体检、分级清理。
+- `assets/player/`：参数化预览台，三栏布局、配音页、内录导出、fMP4 时长回填。
+- `assets/pipeline/`：ASR 锚点 → 时间轴 → 对齐 → SRT → 同步体检，含 Edge TTS 兜底。
+- `references/`：参数基线、22 条返工踩坑、数据契约。
+- 依赖 jpeg-js / pngjs / mpg123-decoder 随仓库提交，免安装。

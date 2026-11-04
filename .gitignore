@@ -3,15 +3,31 @@
 Thumbs.db
 *.swp
 
-# 工程产物（本仓库只存技能本体，不存任何一次制作的中间文件）
+# 单次工程的产物（本仓库只存技能本体，不存任何一次制作的素材）
 out/
 preview/
 paths/
 cues/
 audio/
+brief.json
 *.mp4
 *.webm
+*.wav
+*.mp3
+*.m4a
+*.flac
+
+# 敏感与本地配置
+.env
+.env.*
+secrets*
+*.local.*
+*.pem
+*.key
 
 # Python
 __pycache__/
 *.pyc
+
+# 依赖是特意入库的（跨设备免安装），上面的通配规则不许波及它
+!node_modules/**
