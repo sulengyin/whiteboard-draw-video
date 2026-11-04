@@ -44,7 +44,14 @@ def scene_ids():
 
 
 def download_dir():
-    for p in (Path("/storage/Users/currentUser/Download"), Path.home() / "Download"):
+    """找系统的下载目录。可用 WB_DOWNLOAD_DIR 覆盖，其余按平台惯例探测。"""
+    cands = []
+    env = os.environ.get("WB_DOWNLOAD_DIR")
+    if env:
+        cands.append(Path(env).expanduser())
+    home = Path.home()
+    cands += [home / "Download", home / "Downloads"]
+    for p in cands:
         if p.is_dir():
             return p
     return None
