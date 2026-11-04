@@ -174,6 +174,17 @@ python3 <skill>/scripts/clean_project.py --root . --level 3 --archive ~/Movies/�
 - 22 条返工原因与对应修法：`references/pitfalls.md`
 - 完整命令链路、脚本职责、对齐算法：`references/pipeline.md`
 
+## 修改这个技能自身
+
+改完脚本或文档、准备提交时：
+
+```bash
+python3 scripts/preflight.py                          # 敏感信息 / 本机路径 / 大文件 / 语法
+python3 tests/smoke.py --images ~/videos/xxx/scenes   # 动过 trace_paths 或参数才需要
+```
+
+`preflight` 返回 1 就不要提交。分支、提交格式、版本号、协作边界见 `README.md` 的「维护规范」，`CHANGELOG.md` 每个 tag 补一段。
+
 ## 不要做的事
 
 - 不要用「静态图 + 淡入 / 遮罩刷出」冒充手绘。
