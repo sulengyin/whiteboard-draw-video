@@ -62,6 +62,7 @@ assets/
   player/                参数化预览台（index.html / serve.py / voice.html）
   pipeline/              字幕对齐链路 + Edge TTS 兜底
  素材模板.md            给用户填的表
+ 分镜表模板.md          拆幕用的五列表（幕/段落/时长/画面主线/绘制顺序）
 node_modules/            三个运行时依赖，已提交
 ```
 
