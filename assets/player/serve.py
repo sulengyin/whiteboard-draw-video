@@ -147,6 +147,20 @@ def fix_mp4_duration(path: Path):
         return None
 
 
+def retime_audio(path: Path):
+    """MediaRecorder 的 MP4 里，Opus 音轨的 sample duration 是错的（按到货时间瞎记），
+    整条音轨短 5%，按时间戳播放的播放器会把相邻包叠在一起 → 满篇电流声。
+    这里按 TOC 算出真实帧长重写一遍。脚本缺失就跳过。"""
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).resolve().parent / "build"))
+        from retime_mp4 import retime
+        n, sec = retime(path)
+        print(f"[mp4] 音轨重排 {n} 包 / {sec:.2f}s", flush=True)
+    except Exception as e:
+        print(f"[mp4] 跳过节拍修复：{e}", flush=True)
+
+
 def safe_name(raw: str) -> str:
     name = os.path.basename(raw or "").strip()
     name = re.sub(r"[^\w.\-]+", "_", name)
@@ -269,6 +283,7 @@ class Handler(SimpleHTTPRequestHandler):
         size = dst.stat().st_size
         dl = None
         if dst.suffix.lower() in (".mp4", ".webm", ".mov"):
+            retime_audio(dst)      # 先修音轨时长表，再回填总时长
             fix_mp4_duration(dst)
             d = download_dir() if copy_to_download() else None
             if d:

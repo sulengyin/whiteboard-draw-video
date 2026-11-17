@@ -137,6 +137,10 @@ python3 <skill>/scripts/check_project.py --root .
 - 按真实时间内录，期间不能切走标签页。
 - 导出画布边长取偶数（H.264 会丢奇数行）。
 - 结束提示里必须给绝对路径（`out/`），并附「再下载一份」。
+- **音轨时长表要重排**：Chrome 把 Opus 装进 MP4 时 sample duration 记的是到货间隔，
+  整条音轨短 5%，按时间戳播的播放器会把相邻包叠起来 → 满篇电流声。
+  `serve.py` 收片时会自动调 `build/retime_mp4.py`；如果绕过 serve 直接落盘，记得手动跑一遍：
+  `python3 build/retime_mp4.py out/xxx.mp4`（幂等，可重复跑）。
 
 ### 7. 收尾（避免工程长期占地方）
 
