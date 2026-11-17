@@ -35,6 +35,11 @@ def is_punct_only(line: str) -> bool:
     return bool(line) and all(c in NO_LINE_START + NO_LINE_END + "—-·" for c in line)
 
 
+def _wordish(ch: str) -> bool:
+    """数字、字母、点连成的整体，断行时不能从中间切开。"""
+    return ch.isalnum() or ch in "._"
+
+
 def _cut_index(text: str, start: int, max_w: float) -> int:
     """从 start 起尽量填满 max_w，返回断点下标。"""
     w, j = 0.0, start
@@ -58,6 +63,9 @@ def _cut_index(text: str, start: int, max_w: float) -> int:
     # 避尾：本行不以起首标点结尾
     while j < len(text) and j - 1 > start and text[j - 1] in NO_LINE_END:
         j += 1
+    # 不劈开数字/字母串：192.168.1.10 不能断成 192.168.1. 和 10
+    while j < len(text) and j - 1 > start and _wordish(text[j - 1]) and _wordish(text[j]):
+        j -= 1
     return j
 
 

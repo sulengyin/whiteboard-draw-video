@@ -34,8 +34,9 @@ PAUSE_CHARS = "，。、；：？！…"
 # 各标点后面 TTS 大致会停多久（毫秒），只用来判断「这个停顿更像哪种标点」
 EXPECT = {"？": 450, "。": 450, "！": 450, "，": 170, "、": 90, "；": 260, "：": 300, "…": 350}
 END_CHARS = "。！？"
-MAXW = 26          # 需要拆句时，每片的宽度上限
-SPLIT_MAX = 46     # 整句宽度不超过这个值就不拆，一条字幕两行放得下
+MAXW = 22          # 一条字幕的宽度上限（两行以内，约 4 秒）
+SPLIT_MAX = 22     # 相邻短句合并到这么宽为止
+MINW = 8           # 短于这个宽度就并到邻居，避免「192.168.1.10，」单独闪一屏
 
 
 def _split_by_width(text, spans):
@@ -189,56 +190,103 @@ def frac_at(blocks, t, lo, hi):
     return got / total
 
 
-def split_sentence(text, a, b, s0, e0, blocks, pauses):
-    """把一句排成 1 条还是几条。
+def _is_word(ch):
+    """数字、字母、点：这些字符连在一起是一个整体（192.168.1.10、DHCP）。"""
+    return ch.isalnum() or ch == "."
 
-    两种断点：
-    - 宽度超了，在逗号处均匀切开；
-    - 句子里有明显停顿（>=380ms，TTS 常把长句在这里断句），
-      哪怕宽度没超也在这里断开，否则后半句会在声音还没到时提前显示。
+
+def _best_cut(text, a, b, want):
+    """在 [a+3, b-3] 里找离 want 最近的切点。
+
+    优先级：标点后 > 空格后 > 硬切（但不劈开数字/字母串）。
     """
-    if T.width(text[a:b]) <= SPLIT_MAX and not any(
-            dur >= 380 and s0 < pa < e0 for pa, _pb, dur in pauses):
+    lo, hi = a + 3, b - 3
+    if hi <= lo:
+        return None
+    # 标点只在一定范围内算数，否则会为了「落在逗号后」把一刀挪到很远，
+    # 切出 30 字一条的怪物。
+    span = max(4.0, want * 0.5)
+    for pool in ("，；：、", " "):
+        cands = [k + 1 for k in range(lo, hi)
+                 if text[k] in pool and abs(T.width(text[a:k]) - want) <= span]
+        if cands:
+            return min(cands, key=lambda k: abs(T.width(text[a:k]) - want))
+
+    k, acc = a, 0.0
+    while k < hi and acc < want:
+        acc += T.char_w(text[k])
+        k += 1
+    # 别把 192.168 切成 192 和 .168
+    while k > a + 2 and _is_word(text[k - 1]) and _is_word(text[k]):
+        k -= 1
+    return k if a + 3 <= k <= b - 3 else None
+
+
+def _clauses(text, a, b):
+    """按逗号、顿号切成小句，标点跟着前一小句走。"""
+    out, start = [], a
+    for i in range(a, b):
+        if text[i] in "，；：、":
+            out.append((start, i + 1))
+            start = i + 1
+    if start < b:
+        out.append((start, b))
+    return [c for c in out if c[1] > c[0]]
+
+
+def _split_wide(text, a, b, limit):
+    """一个超宽的小句按宽度拆开，切点不会落在数字/字母串里。"""
+    out, prev = [], a
+    while T.width(text[prev:b]) > limit:
+        k = _best_cut(text, prev, b, limit)
+        if not k or k <= prev:
+            break
+        out.append((prev, k))
+        prev = k
+    out.append((prev, b))
+    return out
+
+
+def split_sentence(text, a, b, s0, e0, blocks, pauses):
+    """把一句排成几条字幕。
+
+    以「逗号级小句」为单位打包，而不是按字数硬切——这样每条字幕都在标点上收尾，
+    不会出现「都用」|「192.168.1.10，」这种把半句话和一个数字切开的情况。
+    单个小句超过 MAXW 才在内部拆；相邻短段再合并到 SPLIT_MAX 以内。
+    """
+    total = T.width(text[a:b])
+    if total <= MAXW and not any(dur >= 380 and s0 < pa < e0 for pa, _pb, dur in pauses):
         return [(a, b)]
 
-    cuts = set()
-    if T.width(text[a:b]) > SPLIT_MAX:
-        k = a
-        while k < b:
-            w, comma, j = 0.0, None, k
-            while j < b:
-                w += 1 if ord(text[j]) > 127 else 0.55
-                if text[j] in "，；：":
-                    comma = j + 1
-                if w >= MAXW:
-                    break
-                j += 1
-            if j >= b:
-                break
-            cut = comma if (comma and comma > k + 6) else j
-            if T.width(text[cut:b]) < 12:
-                break
-            cuts.add(cut)
-            k = cut
+    pieces = []
+    for ca, cb in _clauses(text, a, b):
+        if T.width(text[ca:cb]) > MAXW:
+            pieces += _split_wide(text, ca, cb, MAXW)
+        else:
+            pieces.append((ca, cb))
 
-    for pa, pb, dur in pauses:
-        if dur < 380 or not (s0 < pa < e0):
-            continue
-        f = frac_at(blocks, pb, s0, e0)
-        pos = a + int(f * (b - a))
-        cand = [k for k in range(max(a + 4, pos - 10), min(b - 1, pos + 11)) if text[k] in "，；："]
-        if cand:
-            k = min(cand, key=lambda k: abs(k - pos))
-            cuts.add(k + 1)
+    out = []
+    for p in pieces:
+        if out and T.width(text[out[-1][0]:p[1]]) <= SPLIT_MAX:
+            out[-1] = (out[-1][0], p[1])
+        else:
+            out.append(p)
 
-    cuts = sorted(c for c in cuts if a + 4 < c < b - 4)
-    out, prev = [], a
-    for c in cuts:
-        if T.width(text[prev:c]) < 8:
+    # 太短的段并到邻居：一屏只有「192.168.1.10，」会像闪了一下
+    i = 0
+    while i < len(out) and len(out) > 1:
+        a2, b2 = out[i]
+        if T.width(text[a2:b2].strip()) >= MINW:
+            i += 1
             continue
-        out.append((prev, c))
-        prev = c
-    out.append((prev, b))
+        if i > 0 and T.width(text[out[i - 1][0]:b2]) <= SPLIT_MAX + 7:
+            out[i - 1] = (out[i - 1][0], b2)
+            out.pop(i)
+        elif i + 1 < len(out) and T.width(text[a2:out[i + 1][1]]) <= SPLIT_MAX + 7:
+            out[i] = (a2, out[i + 1][1])
+            out.pop(i + 1)
+        else:
+            i += 1
     return out
 
 
@@ -368,8 +416,9 @@ def build():
             continue
 
         data = {"scene": idx, "id": sid, "durationMs": int(speech_end - onset),
-                "cues": [{"startMs": int(c[2]), "endMs": int(c[3]), "text": text[c[0]:c[1]],
-                          "lines": _lines(text[c[0]:c[1]]), "seg": sid} for c in cues]}
+                "cues": [{"startMs": int(c[2]), "endMs": int(c[3]),
+                          "text": (seg := text[c[0]:c[1]].strip()),
+                          "lines": _lines(seg), "seg": sid} for c in cues]}
         (out_dir / f"{sid}.json").write_text(
             json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
         all_cues.append(data)
