@@ -137,10 +137,13 @@ python3 <skill>/scripts/check_project.py --root .
 - 按真实时间内录，期间不能切走标签页。
 - 导出画布边长取偶数（H.264 会丢奇数行）。
 - 结束提示里必须给绝对路径（`out/`），并附「再下载一份」。
-- **音轨时长表要重排**：Chrome 把 Opus 装进 MP4 时 sample duration 记的是到货间隔，
-  整条音轨短 5%，按时间戳播的播放器会把相邻包叠起来 → 满篇电流声。
-  `serve.py` 收片时会自动调 `build/retime_mp4.py`；如果绕过 serve 直接落盘，记得手动跑一遍：
-  `python3 build/retime_mp4.py out/xxx.mp4`（幂等，可重复跑）。
+- **时间轴要重排**：MediaRecorder 的 MP4 有三处时间信息是坏的 —— Opus 包的 sample duration
+  记成到货间隔（整轨短 5%）、两条轨的 `tkhd.duration` 都是 0、视频轨 `mdhd.duration` 只有首帧长度
+  （49 秒的片子写成 0.04 秒）。播放器随便吃中一条就会出杂音或对不上。
+  `serve.py` 收片时自动调 `build/retime_mp4.py`；绕过 serve 直接落盘就手动跑一遍：
+  `python3 build/retime_mp4.py out/xxx.mp4`（幂等，可重复跑，`--check` 只体检）。
+- **备一个 WebM 出口**：MP4 里 Chrome 只会塞 Opus，碰上不认 Opus-in-MP4 的播放器只能换封装。
+  页面上的「导出 WebM」走原生 VP9+Opus，容器和时长都规整，拿来判断问题在文件还是在播放器。
 
 ### 7. 收尾（避免工程长期占地方）
 

@@ -69,6 +69,7 @@
       <button id="shot">截一帧看版式</button>
       <button id="expSample">导出样片 30 秒</button>
       <button id="expFull" class="primary">导出全片</button>
+      <button id="expWebm">导出 WebM</button>
       <a href="voice.html" style="color:#e97036;font-size:13px;text-decoration:none;white-space:nowrap">换配音</a>
       <span id="expTip" class="t wide"></span>
     </div>
@@ -401,7 +402,7 @@ function fmtClock(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 function setExportUI(busy, msg) {
-  ['expSample','expFull','prev','next','seek'].forEach(id => {
+  ['expSample','expFull','expWebm','prev','next','seek'].forEach(id => {
     const el = document.getElementById(id); if (el) el.disabled = busy;
   });
   const pb = document.getElementById('play');
@@ -429,7 +430,7 @@ async function shootFrame() {
   }
 }
 
-async function exportMovie(limitSec) {
+async function exportMovie(limitSec, prefer) {
   if (EXP.busy) return;
   if (typeof MediaRecorder === 'undefined' || !cv.captureStream) {
     alert('当前环境不支持 MediaRecorder / captureStream，无法内录。请用 Chrome 或 Edge 打开本页。');
@@ -450,8 +451,11 @@ async function exportMovie(limitSec) {
 
     const stream = cv.captureStream(CFG.fps);
     EXP.dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
-    const cands = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4',
-                   'video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
+    // MP4 里 Chrome 只会塞 Opus，遇到不认 Opus-in-MP4 的播放器就出杂音；
+    // 导出 WebM 走的是原生 VP9+Opus 复用，容器和时长都规整，作为对照用。
+    const webm = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
+    const cands = prefer === 'webm' ? webm
+      : ['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4', ...webm];
     const mime = cands.find(m => MediaRecorder.isTypeSupported(m)) || '';
     const rec = new MediaRecorder(stream, {
       mimeType: mime || undefined,
@@ -495,7 +499,7 @@ async function exportMovie(limitSec) {
     if (!blob.size) throw new Error('录制没有产生任何数据，可能是浏览器拿不到画布画面（换 Chrome/Edge 再试）');
     if (blob.size < 20000) throw new Error(`只录到 ${blob.size} 字节，录音/画面都没跟上，请刷新页面重试`);
     const ext = mime.includes('mp4') ? 'mp4' : 'webm';
-    const name = `${CFG.slug}-${limitSec ? limitSec + 's' : 'full'}.${ext}`;
+    const name = `${CFG.slug}-${limitSec ? limitSec + 's' : 'full'}${prefer === 'webm' ? '-webm' : ''}.${ext}`;
     const url = URL.createObjectURL(blob);
     EXP.lastBlob = blob; EXP.lastName = name;
 
@@ -632,6 +636,7 @@ async function loadScene(i, autoplay) {
   document.getElementById('shot').onclick = shootFrame;
   document.getElementById('expSample').onclick = () => exportMovie(30);
   document.getElementById('expFull').onclick = () => exportMovie(0);
+  document.getElementById('expWebm').onclick = () => exportMovie(0, 'webm');
 
   const gate = document.getElementById('gate');
   gate.onclick = () => {
