@@ -98,6 +98,17 @@ grid 三行把 `.bar` 压扁/挤出视口。
 MediaRecorder 出的是 fragmented MP4，`mvhd.duration` 恒为 0。
 → 解析 `mdhd.timescale` + 最后一个 `tfdt`，把秒数写回 `mvhd.duration`；`serve.py` 已内置。
 
+## 预览台
+
+**P1. 点播放毫无反应：画面不动、也没有声音**
+`play()` 开头写了 `if (!S.cues) return;`，而 `cues/` 要等字幕对齐才生成——预览阶段永远播不起来。
+→ 播放只依赖图和配音，字幕缺了就只是不画字幕。守卫改成 `if (!S.img) return`。
+
+**P2. 有声音，但画面一上来就是整张图**
+`drawMs` 在音频 `loadedmetadata` 之前算，此时 `totalMs()` 还是 0，`Math.min(0*0.95, ...)` 得 0，
+进度恒为 1，看起来就是静态海报。
+→ 抽 `recomputeDrawMs()`，路径加载后算一次、`onloadedmetadata` 再算一次，并用 `need/0.95` 兜底。
+
 **附：不要在鸿蒙上折腾 ffmpeg**
 `@ffmpeg-installer/linux-arm64` 解出来的二进制未签名 → 签名后直接 segfault（静态 glibc 版）。
 → 出片走浏览器 `captureStream` + `MediaRecorder`，老老实实按真实时间录。

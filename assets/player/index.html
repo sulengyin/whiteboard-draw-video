@@ -109,6 +109,16 @@ const totalMs = () => Math.max(
   S.audioMs ? S.audioMs + 120 : 0
 );
 
+// 绘制时长跟着「这一幕有多长」走。音频元数据是异步到的，
+// 早算会得到 0 秒 → 进度恒为 1 → 整图一次性直出，看着像静态画面。
+function recomputeDrawMs() {
+  if (!S.path) { S.drawMs = 0; return; }
+  const L = S.path.len || 30000;
+  const need = Math.max(CFG.minDrawMs, L / CFG.drawSpeed * 1000);
+  const tot = totalMs() || need / 0.95;
+  S.drawMs = Math.min(tot * 0.95, need);
+}
+
 /* ---------- 镜头：整幅图等比缩小后轻微呼吸，任何时刻都不裁画面 ---------- */
 function cameraAt(p) {
   const z = 1 + 0.035 * (0.5 - 0.5 * Math.cos(p * Math.PI * 2));
@@ -339,15 +349,16 @@ function tick(ts) {
     if (!S.last) S.last = ts;
     S.t += ts - S.last; S.last = ts;
   }
-  if (S.t >= totalMs()) {
+  const tot = totalMs();
+  if (tot > 0 && S.t >= tot) {
     if (S.index < S.playlist.scenes.length - 1) { loadScene(S.index + 1, true); return; }
-    S.t = totalMs(); pause();
+    S.t = tot; pause();
   }
   render();
   requestAnimationFrame(tick);
 }
 function play() {
-  if (!S.cues) return;
+  if (!S.img) return;      // 字幕还没对齐也要能播：画面与配音都不依赖 cues
   const g = document.getElementById('gate'); if (g) g.classList.add('hide');
   if (EXP.ac && EXP.ac.state === 'suspended') EXP.ac.resume();
   if (S.t >= totalMs()) S.t = 0;
@@ -523,7 +534,11 @@ async function loadScene(i, autoplay) {
   const sc = S.playlist.scenes[i];
   const id = sc.id || `scene-${String(i + 1).padStart(2, '0')}`;
   au.src = sc.audio || `audio/${id}.wav`;
-  au.onloadedmetadata = () => { S.hasAudio = true; S.audioMs = au.duration * 1000; };
+  au.onloadedmetadata = () => {
+    S.hasAudio = true; S.audioMs = au.duration * 1000;
+    recomputeDrawMs();                    // 拿到真实时长后重算，否则进度会恒为 1
+    if (!S.playing) render();
+  };
   au.onerror = () => { S.hasAudio = false; };
   document.querySelectorAll('.scene').forEach((el, k) => el.classList.toggle('on', k === i));
   try {
@@ -545,9 +560,8 @@ async function loadScene(i, autoplay) {
     // 落笔路径：每个封闭图形描一圈、描完整块显影
     try {
       S.path = await fetch(sc.path || `paths/${id}.json`).then(r => r.json());
-      const L = S.path.len || 30000;
-      S.drawMs = Math.min(totalMs() * 0.95, Math.max(CFG.minDrawMs, L / CFG.drawSpeed * 1000));
-    } catch (e) { S.path = null; }
+      recomputeDrawMs();
+    } catch (e) { S.path = null; S.drawMs = 0; }
 
     render();
     if (autoplay) {
@@ -623,7 +637,14 @@ async function loadScene(i, autoplay) {
 
   // 门上的总时长按音频实际长度算，不写死
   const last = S.playlist.scenes[S.playlist.scenes.length - 1];
-  const sec = (last && last.endMs ? last.endMs : 0) / 1000;
+  let sec = (last && last.endMs ? last.endMs : 0) / 1000;
+  if (!sec) {
+    // 字幕还没回填 endMs 时，直接问服务端各幕音频时长
+    try {
+      const st = await (await fetch('/audio_status')).json();
+      sec = (st.items || []).reduce((a, b) => a + (b.sec || 0), 0);
+    } catch (e) {}
+  }
   if (sec > 0) {
     document.getElementById('gateBtn').textContent =
       `▶ 播放全片 ${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;

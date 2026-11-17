@@ -2,6 +2,23 @@
 
 版本号规则：改数据契约或调用方式 → major；新增能力 → minor；修问题、改文档 → patch。
 
+## [1.1.1] - 2026-11-17
+
+### 修复
+
+- `assets/player/index.html`：`play()` 不再要求字幕已对齐。原文 `if (!S.cues) return;`
+  会让「**配音已生成、字幕还没对齐**」这个中间状态完全播不动——点播放没反应、没声音、画面不动。
+  现改为只要求图已加载。
+- `assets/player/index.html`：绘制时长改为 `recomputeDrawMs()`，在路径加载后与音频
+  `loadedmetadata` 各算一次。此前在音频元数据到达前用 `totalMs()` 会算出 0 秒，
+  导致进度恒为 1、整张图一次性直出，看着像静态画面。
+- `assets/player/index.html`：门上的总时长在 `playlist.endMs` 未回填时，
+  改问 `/audio_status` 累加各幕配音时长。
+
+### 文档
+
+- `references/pitfalls.md` 新增「预览台」小节（P1 播不动、P2 一上来就整图）。
+
 ## [1.1.0] - 2026-11-04
 
 ### 新增
