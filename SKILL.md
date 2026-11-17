@@ -35,6 +35,7 @@ agent_created: true
 9. **导出要能定位**：录完回传本地写 `out/`，页面显示绝对路径且允许换行（不截断）。默认不再往 Download 复制第二份。
 10. **fragmented MP4 的时长要回填**，否则播放器显示 0:00、进度条拖不动。
 11. **交付后必须清理**：跑一次 `clean_project.py --level 1`，工程不能长期攒在磁盘上（一支片 250 MB+，其中九成可重算）。
+12. **配音必须留 3dB 余量**：TTS 默认顶到 0dBFS，源文件就已削波；导出编码（Opus/AAC）会在峰值处再冲 0.5~1dB，播放器只能硬削，听感就是"电流声 / 滋滋声"。配音落地后立刻跑 `prep_audio.py`（48k / 去直流 / 峰值 -3dBFS），导出链里还有限幅器兜底。
 
 ## 标准流程
 
@@ -95,6 +96,15 @@ python3 serve.py 8010     # 必须用它，普通 http.server 没有 /upload
 - 没有 DubbingX 账号时的兜底：`npm i msedge-tts mpg123-decoder`，然后
   `NODE_TLS_REJECT_UNAUTHORIZED=0 node build/tts_edge.js --voice zh-CN-YunyangNeural`。
   机器人感比 DubbingX 明显，只作退路。
+
+配音落盘后**先洗一遍再对齐**（每次重新生成配音都要重跑，只有第一次可跳过）：
+
+```bash
+python3 build/prep_audio.py .        # 统一 48k、去直流、峰值压到 -3dBFS，manifest 时长同步更新
+```
+
+不洗的后果：TTS 输出基本是 0dBFS 满刻度，Opus/AAC 重建波形会过冲，播放器削波 → 电流声。
+洗之前建议把原件留在 `audio/edge-backup/`，改稿重录时可以对照。
 
 ### 5. 字幕对齐
 

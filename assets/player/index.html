@@ -99,7 +99,7 @@ const S = { playlist:null, index:0, img:null, cues:null, t:0, playing:false, las
             paper:CFG.paper, objUrl:null, exportScale:1, audioMs:0,
             path:null, ri:0, li:0, maskP:0, drawMs:0 };
 
-const EXP = { rec:null, chunks:[], ac:null, dest:null, node:null, busy:false, stop:false,
+const EXP = { rec:null, chunks:[], ac:null, dest:null, node:null, lim:null, busy:false, stop:false,
               lastBlob:null, lastName:'' };
 
 const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
@@ -378,11 +378,21 @@ function pause() {
 function audioGraph() {
   if (!EXP.ac) {
     const AC = window.AudioContext || window.webkitAudioContext;
-    EXP.ac = new AC();
+    // 配音已经是 48k，这里显式对齐，省掉一次浏览器重采样
+    try { EXP.ac = new AC({ sampleRate: 48000 }); } catch (e) { EXP.ac = new AC(); }
     EXP.dest = EXP.ac.createMediaStreamDestination();
     EXP.node = EXP.ac.createMediaElementSource(au);
-    EXP.node.connect(EXP.dest);
-    EXP.node.connect(EXP.ac.destination);
+    // 限幅器兜底：TTS 常被推到 0dBFS，Opus/AAC 重建波形会过冲 0.5~1dB，
+    // 源已经满刻度时编码后必然削波，听感就是"电流声"。留 3dB 余量。
+    EXP.lim = EXP.ac.createDynamicsCompressor();
+    EXP.lim.threshold.value = -3;
+    EXP.lim.knee.value = 0;
+    EXP.lim.ratio.value = 20;
+    EXP.lim.attack.value = 0.003;
+    EXP.lim.release.value = 0.25;
+    EXP.node.connect(EXP.lim);
+    EXP.lim.connect(EXP.dest);
+    EXP.lim.connect(EXP.ac.destination);
   }
   if (EXP.ac.state === 'suspended') EXP.ac.resume();
 }
@@ -446,7 +456,7 @@ async function exportMovie(limitSec) {
     const rec = new MediaRecorder(stream, {
       mimeType: mime || undefined,
       videoBitsPerSecond: CFG.kbps * 1000,
-      audioBitsPerSecond: 128000
+      audioBitsPerSecond: 160000
     });
     EXP.rec = rec; EXP.chunks = [];
     rec.ondataavailable = e => { if (e.data && e.data.size) EXP.chunks.push(e.data); };
