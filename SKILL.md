@@ -38,6 +38,7 @@ agent_created: true
 12. **配音必须留 3dB 余量**：TTS 默认顶到 0dBFS，源文件就已削波；导出编码（Opus/AAC）会在峰值处再冲 0.5~1dB，播放器只能硬削，听感就是"电流声 / 滋滋声"。配音落地后立刻跑 `prep_audio.py`（48k / 去直流 / 峰值 -3dBFS），导出链里还有限幅器兜底。
 13. **交付版音轨必须是 AAC**：Chrome 的 MediaRecorder 只能把 Opus 塞进 MP4，而 Windows 媒体播放器 / 手机自带播放器 / 微信解 Opus-in-MP4 会出一层沙沙底噪——文件本身干净，是播放器的问题。导出后一律 `node build/to_aac.mjs`，交 `-aac.mp4`。
 14. **声音问题先取证再改**：跑 `node build/probe_audio.mjs out/xxx.mp4`，按 FAIL 的顺序修。不许因为"听起来像"就改电平、改容器、改播放器——这三处本轮各错过一次。
+15. **用户一确认成品就只留成品**：当用户表示「这个能用 / 就用这版」并明确说本次制作可以结束，立刻执行定稿清理——成片归档，工程目录连同配音、字幕、路径、预览帧、依赖全部删除，磁盘上只留那一个视频文件。同一支片子只留一份（`-aac` 交付版优先），重录产生的旧版不保留。不要等用户想起来再提，这是交付动作的一部分。
 
 ## 标准流程
 
@@ -192,14 +193,39 @@ node build/probe_audio.mjs out/xxx-aac.mp4 --ref audio/01.wav        # 退出码
 python3 <skill>/scripts/clean_project.py --root .                      # 只看占用明细
 python3 <skill>/scripts/clean_project.py --root . --level 1 --dry-run  # 看会删什么
 python3 <skill>/scripts/clean_project.py --root . --level 1            # 每次交付后跑
-python3 <skill>/scripts/clean_project.py --root . --level 3 --archive ~/Movies/白板视频   # 定稿后
+python3 <skill>/scripts/clean_project.py --root . --level 3             # 定稿：归档成片 + 删工程
 ```
 
 - **L1 是交付后的默认动作**，能省 60% 以上（预览帧 + 旧版成片 + 旧 TTS 备份 + 早期 ffmpeg 残留），清完仍可直接重录。
 - **L2** 在定稿不再改时用；之后要改配音就得重走第 4–5 步。
-- **L3** 把最新成片移到 `--archive` 再删整个工程，只剩视频本身。
+- **L3** 把成片移到归档目录（默认 `~/Movies/白板视频`），再删整个工程，只剩视频本身。
 - `serve.py` 默认**不**往 Download 再复制一份（否则每支片子白占一倍）；要复制的把 `project.json` 的 `copyToDownload` 设成 `true`。
 - 成片体积由码率决定（默认 2600 kbps，5 分钟约 80 MB），压到 2000 以下字幕边缘会糊，不建议。
+
+#### 定稿清理：用户一说"可以了"就直接做
+
+触发条件（两个都满足，缺一不可）：
+
+1. 用户确认成品可用——「这个没问题 / 就用这版 / 能发了」；
+2. 用户明确表示本次制作结束——「可以结束了 / 本次流程到此为止 / 不用再改了」。
+
+满足后**不问第二遍**，直接：
+
+```bash
+python3 <skill>/scripts/clean_project.py --root . --level 3 --dry-run   # 确认选中的是 -aac 版
+python3 <skill>/scripts/clean_project.py --root . --level 3
+```
+
+结果只留一个文件：`~/Movies/白板视频/<slug>-aac.mp4`（可用 `--archive` 换位置）。
+工程目录、`audio/`、`cues/`、`srt/`、`paths/`、`scenes/`、`node_modules/` 全部消失。
+
+两条判断不要做错：
+
+- **"留着以后改"不算保留理由**。素材原件在用户手上，配音可重录，路径可重算；工程留着只是占地方。
+- **只留一份**。同一支片子同时有录制版和 `-aac` 版时，保留 `-aac`；重录产生的旧版一律删。
+  L3 的挑选规则是「`-aac` 优先，其次 mtime」，不会被后录的 Opus 版抢走。
+
+如果用户只是说「这个视频不错」但没提结束，不要删——先跑 L1，把预览帧和旧版清掉即可。
 
 ## 验收清单
 
@@ -216,13 +242,14 @@ python3 <skill>/scripts/clean_project.py --root . --level 3 --archive ~/Movies/�
 | 9 | 避头尾 | 行首无 `，。、；：？！）】》`；无孤字行 |
 | 10 | 导出 | 两处文件 md5 一致；时长非 0:00 |
 | 11 | 交付音频 | `probe_audio.mjs` 退出码 0；编码是 AAC；峰值 ≤ -1 dBFS |
+| 12 | 定稿清理 | 用户确认结束后跑 L3，磁盘上只剩一个成片文件 |
 
 `check_project.py` 覆盖 1、3、7、9 与文件完整性；2、4、5、6、8、10 需要截帧或人工看一眼。
 
 ## 参数与踩坑
 
 - 参数基线、调参顺序：`references/params.md`
-- 22 条返工原因 + 5 条成片声音排查：`references/pitfalls.md`
+- 23 条返工原因 + 5 条成片声音排查：`references/pitfalls.md`
 - 完整命令链路、脚本职责、对齐算法：`references/pipeline.md`
 
 ## 修改这个技能自身
@@ -245,3 +272,4 @@ python3 tests/smoke.py --images ~/videos/xxx/scenes   # 动过 trace_paths 或�
 - 不要在鸿蒙上折腾 ffmpeg 静态二进制（签名后 segfault），直接走浏览器内录。
 - 不要凭"听起来像"去改声音。没有 `probe_audio` 的 FAIL 项做依据，改电平 / 改容器 / 换播放器都是白改。
 - 不要交 Opus-in-MP4 给非 Chrome 用户；也不要用"预览页正常"证明文件正常。
+- 不要因为"以后可能要改"就把工程留在磁盘上。用户确认结束就 L3，素材在用户手上、配音可重录。

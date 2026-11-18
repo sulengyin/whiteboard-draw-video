@@ -5,7 +5,8 @@
     python3 clean_project.py --root . --level 1 --dry-run
     python3 clean_project.py --root . --level 1          # 清缓存，秒级可重建
     python3 clean_project.py --root . --level 2          # 定稿后：连配音/字幕中间件一起清
-    python3 clean_project.py --root . --level 3 --archive ~/Movies/白板视频   # 归档成片并删工程
+    python3 clean_project.py --root . --level 3                     # 归档到 ~/Movies/白板视频 并删工程
+    python3 clean_project.py --root . --level 3 --archive ~/输出目录
 
 各级删什么：
     L1  预览帧、paths/preview 调试图、out/ 里的旧版本（保留最新 N 个）、audio/edge-backup、__pycache__
@@ -13,6 +14,7 @@
     L3  把最新成片移到 --archive，然后删掉整个工程目录
 
 L1 之后工程仍可直接重录；L2 之后要重做配音和字幕对齐；L3 之后只剩成片。
+「最新」优先认 `-aac.mp4`（交付版），不会被重录留下的录制版抢走。
 """
 import argparse
 import json
@@ -46,13 +48,28 @@ def human(n: int) -> str:
     return f"{n:.1f}G"
 
 
+def movie_rank(p: Path):
+    """排序键：交付版（-aac）优先，其次按修改时间。
+
+    同一支片子常同时躺着录制版 xxx.mp4 和交付版 xxx-aac.mp4，
+    只按 mtime 选会看运气——重录一次就可能把 AAC 版判成旧的删掉，
+    结果留下一个别人播起来有杂音的 Opus 文件。
+    """
+    delivered = 1 if p.stem.lower().endswith("-aac") else 0
+    try:
+        mtime = p.stat().st_mtime
+    except OSError:
+        mtime = 0
+    return (delivered, mtime)
+
+
 def newest_movies(root: Path):
     out = root / "out"
     if not out.is_dir():
         return []
     vids = [p for p in out.iterdir()
             if p.is_file() and p.suffix.lower() in (".mp4", ".webm", ".mov")]
-    return sorted(vids, key=lambda p: p.stat().st_mtime, reverse=True)
+    return sorted(vids, key=movie_rank, reverse=True)
 
 
 def collect(root: Path, level: int, keep: int):
@@ -111,9 +128,12 @@ def report(root: Path, level: int, keep: int, dry: bool, archive: Path | None):
         if not vids:
             sys.exit("out/ 里没有成片，拒绝删除工程")
         latest = vids[0]
-        print(f"成片：{latest.name}  {human(du(latest))}")
+        delivered = latest.stem.lower().endswith("-aac")
+        print(f"成片：{latest.name}  {human(du(latest))}"
+              + ("" if delivered else "  ← 注意：不是 AAC 交付版"))
         if not archive:
-            sys.exit("L3 必须给 --archive <目录>，先把成片挪出去再删工程")
+            archive = Path.home() / "Movies" / "白板视频"
+            print(f"未指定 --archive，用默认归档目录：{archive}")
         if dry:
             print(f"[dry] 将 {latest} → {archive / latest.name}")
             print(f"[dry] 将删除整个 {root}，释放 {human(total_before)}")
