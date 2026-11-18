@@ -1,4 +1,4 @@
-# 踩坑清单（22 条，按出现频率排序）
+# 踩坑清单（22 条 + 5 条成片声音，按出现频率排序）
 
 每条都是真实返工，不是理论风险。写代码前先扫一遍，能省掉大部分来回。
 
@@ -97,6 +97,34 @@ grid 三行把 `.bar` 压扁/挤出视口。
 **22. 播放器显示 0:00，进度条拖不动**
 MediaRecorder 出的是 fragmented MP4，`mvhd.duration` 恒为 0。
 → 解析 `mdhd.timescale` + 最后一个 `tfdt`，把秒数写回 `mvhd.duration`；`serve.py` 已内置。
+
+## 成片声音（电流声 / 电音 / 沙沙）
+
+这类描述本身没有信息量，同一句话可能对应四个完全不同的原因。顺序固定：**取证 → 对号 → 只改那一处**。
+
+**S1. 全程"沙沙"底噪，换播放器不一样**
+MP4 里 Chrome 只会写 Opus，Windows 媒体播放器 / 手机自带 / 微信解 Opus-in-MP4 会自带一层噪声；
+Chrome 自己顺序解码，所以预览页和浏览器里都听不出来。
+→ 不是文件问题，别动电平也别改容器。`node build/to_aac.mjs out/xxx.mp4` 转 AAC，视频轨零损失。
+
+**S2. 声音开始几秒正常，越往后越糊，像两层声音叠着**
+Opus 包的 `sample duration` 被记成"两个包到货的墙钟间隔"（21/37.5ms 乱跳），
+容器说 47.8s、包里实际 50.2s，按时间戳播就叠放 5%。
+→ `python3 build/retime_mp4.py out/xxx.mp4`（按 TOC 算真实帧长重写 trun/tfdt）。
+
+**S3. 音画不同步、进度条乱跳、某些播放器只放一帧**
+两条轨的 `tkhd.duration` 都是 0，视频轨 `mdhd.duration` 只有首帧长度（0.04s）。
+→ 同一个脚本已覆盖：按 trun 累加每轨真实时长回写 mdhd/tkhd/mvhd。
+
+**S4. 满篇爆点，波形顶到天花板**
+TTS 输出 0dBFS，源文件已削波；Opus 重建波形再冲 0.6dB，播放器硬削。
+→ `python3 build/prep_audio.py .` 重洗配音（-3dBFS），然后重跑字幕链路与录制。
+
+**S5. 改了三处还是没好**
+说明在猜。跑 `node build/probe_audio.mjs out/xxx.mp4 --ref audio/01.wav`，
+它把编码、时长一致性、峰值、掉块、与配音的包络相关度一次列全，按 FAIL 项修，修完退出码应为 0。
+
+**判据速记**：把成片音轨解成 wav 单独播——wav 干净、mp4 脏，就是解码器的问题，只能换编码。
 
 ## 预览台
 

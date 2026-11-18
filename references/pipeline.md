@@ -13,7 +13,7 @@
 ├── scenes/               插画（文件名 = 幕 id）
 ├── paths/<id>.json       笔迹路径
 ├── preview/              离线截帧、顺序预览图
-├── audio/<id>.wav        配音（16k / 16bit / mono）
+├── audio/<id>.wav        配音（prep_audio 后统一 48k / 16bit / mono）
 ├── cues/<id>.json        幕内字幕（页面与 SRT 共用这一份）
 ├── srt/tts/<id>.txt      旁白原稿（出字幕）
 ├── srt/tts/spoken/<id>.txt  发音稿（喂 TTS）
@@ -127,12 +127,15 @@ ASR 听写 → asr_to_anchors.py → retime2.py → align2.py → make_srt.py �
 
 ```
 canvas.captureStream(fps)
-  + AudioContext.createMediaElementSource(audio) → MediaStreamDestination
-  → MediaRecorder(mp4;avc1+aac → 退 webm)
+  + AudioContext(48k).createMediaElementSource(audio) → DynamicsCompressor(-3dB) → MediaStreamDestination
+  → MediaRecorder(mp4;avc1+opus → 退 webm)
   → Blob → POST /upload
 ```
 
-`/upload` 做两件事：写 `out/`（同名加序号）→ 修 fMP4 时长。
+Chrome 的 MP4 复用器不提供 AAC，只会写 Opus；`video/mp4;codecs=...,mp4a.40.2` 那句
+`isTypeSupported` 返回 true 但录出来仍是 Opus，别被骗。
+
+`/upload` 做三件事：写 `out/`（同名加序号）→ `retime_mp4.py` 重排时间轴 → 修 `mvhd.duration`。
 `project.json` 的 `copyToDownload` 为 `true` 时才额外复制到 `~/Download`（默认关，避免双倍占用）。
 页面提示必须给 `out/` 的绝对路径。
 
@@ -141,6 +144,23 @@ canvas.captureStream(fps)
 - `ac.resume()` 已 await，`au.currentTime` 在走（否则录出静音）。
 - 画布边长偶数。
 - 录制期间不切标签页。
+
+### 交付前的两道处理
+
+```
+out/xxx.mp4 ──retime_mp4──> 时间轴可信 ──to_aac──> out/xxx-aac.mp4 ──probe_audio──> 退出码 0
+```
+
+| 脚本 | 职责 | 幂等 |
+|---|---|---|
+| `retime_mp4.py` | 按 Opus TOC 算真实帧长，重写 trun duration / tfdt / mdhd / tkhd / mvhd | 是，`--check` 只体检 |
+| `to_aac.mjs` | 视频轨原样拷贝，Opus → AAC-LC 192k 重封装；纯 wasm，不依赖系统 ffmpeg | 是，无 Opus 轨直接跳过 |
+| `probe_audio.mjs` | 编码 / 时长一致性 / 峰值 / 掉块 / 与源配音的包络相关度，退出码即结论 | 只读 |
+
+`to_aac.mjs` 的链路：mp4box 拆包 → opus-decoder 解 PCM → mediabunny `EncodedVideoPacketSource`
+拷贝 H.264 + `AudioSampleSource({codec:'aac'})` → `@mediabunny/aac-encoder`。
+前置依赖必须 `registerAacEncoder()` 在模块顶层调用，否则 Node 里报
+`AudioEncoder is not available in this environment`。
 
 ## 环境限制（鸿蒙）
 

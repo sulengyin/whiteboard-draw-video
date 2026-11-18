@@ -36,6 +36,8 @@ agent_created: true
 10. **fragmented MP4 的时长要回填**，否则播放器显示 0:00、进度条拖不动。
 11. **交付后必须清理**：跑一次 `clean_project.py --level 1`，工程不能长期攒在磁盘上（一支片 250 MB+，其中九成可重算）。
 12. **配音必须留 3dB 余量**：TTS 默认顶到 0dBFS，源文件就已削波；导出编码（Opus/AAC）会在峰值处再冲 0.5~1dB，播放器只能硬削，听感就是"电流声 / 滋滋声"。配音落地后立刻跑 `prep_audio.py`（48k / 去直流 / 峰值 -3dBFS），导出链里还有限幅器兜底。
+13. **交付版音轨必须是 AAC**：Chrome 的 MediaRecorder 只能把 Opus 塞进 MP4，而 Windows 媒体播放器 / 手机自带播放器 / 微信解 Opus-in-MP4 会出一层沙沙底噪——文件本身干净，是播放器的问题。导出后一律 `node build/to_aac.mjs`，交 `-aac.mp4`。
+14. **声音问题先取证再改**：跑 `node build/probe_audio.mjs out/xxx.mp4`，按 FAIL 的顺序修。不许因为"听起来像"就改电平、改容器、改播放器——这三处本轮各错过一次。
 
 ## 标准流程
 
@@ -47,7 +49,7 @@ agent_created: true
 python3 <skill>/scripts/parse_brief.py --brief 素材.md --out ~/videos/xxx
 python3 <skill>/scripts/new_project.py --out ~/videos/xxx --title "标题" --images ./pics
 cd ~/videos/xxx
-# 依赖已随工程自带（jpeg-js / pngjs / mpg123-decoder，约 1.2MB），不用 npm i
+# 依赖已随工程自带（jpeg-js / pngjs / mpg123-decoder + AAC 转码链路，约 13MB），不用 npm i
 ```
 
 `parse_brief.py` 产出 `brief.json` 与 `srt/tts/NN.txt`（逐字原稿）、`srt/tts/spoken/NN.txt`（套用过「发音修正」），并检查幕号连续、图片存在、旁白非空——有问题会直接列出哪一幕哪一项。
@@ -149,6 +151,33 @@ python3 <skill>/scripts/check_project.py --root .
 - **备一个 WebM 出口**：不认 Opus 的播放器也可以导 WebM（VP9+Opus 原生复用）交叉验证，
   页面上的「导出 WebM」就是干这个的。
 
+**交出去之前自检，不要靠耳朵：**
+
+```bash
+node build/to_aac.mjs out/xxx.mp4                                   # → out/xxx-aac.mp4
+node build/probe_audio.mjs out/xxx-aac.mp4 --ref audio/01.wav        # 退出码 0 才算过
+```
+
+`probe_audio` 会查编码、容器与包内时长是否一致、峰值是否削波、语音中有没有掉块，
+以及与指定配音的包络相关度（附带起点秒数，可当对位校验）。退出码非 0 就不要交付。
+
+#### 声音不对时，按这个顺序查（不要跳步）
+
+"有电流声 / 电音 / 沙沙声"这一句描述没法定责，必须先拿到一条能证伪的证据。
+
+| 步 | 取证 | 判据 | 修法 |
+|---|---|---|---|
+| 1 | `probe_audio` 看**编码** | 是 Opus 且用户用 Windows/手机/微信播 | 转 AAC（`to_aac.mjs`），其余什么都不用改 |
+| 2 | `probe_audio` 看**时长一致** | 容器比包内短 >2% | `retime_mp4.py` |
+| 3 | `probe_audio` 看**电平** | 峰值 >-0.5dBFS 或有削波样本 | 重洗配音 `prep_audio.py` → 重跑字幕 → 重录 |
+| 4 | `probe_audio` 看**连续性 / 对位** | 掉块 >5 处，或相关度 <0.85 | 说明包被叠放或音画错位，回到第 2 步 |
+
+关键分叉：**把成片音轨解成 wav 单独播**。wav 干净而 mp4 脏 → 播放器解码 Opus 的问题，
+只能换编码，改电平、改容器、换封装（WebM 仍是 Opus）都无效。
+
+反向教训：不要用"预览页听着正常"排除文件问题——Chrome 是顺序解码，容器时长表坏了它也听不出来，
+只有按时间戳解码的播放器（几乎全部第三方播放器）才会炸。
+
 ### 7. 收尾（避免工程长期占地方）
 
 一支 5 分钟的片子，工程会长到 250–300 MB，真正该留的只有 `out/*.mp4`。删之前先分清三类：
@@ -186,13 +215,14 @@ python3 <skill>/scripts/clean_project.py --root . --level 3 --archive ~/Movies/�
 | 8 | 字幕时间 | 偏差中位 ≤50ms、90 分位 ≤300ms |
 | 9 | 避头尾 | 行首无 `，。、；：？！）】》`；无孤字行 |
 | 10 | 导出 | 两处文件 md5 一致；时长非 0:00 |
+| 11 | 交付音频 | `probe_audio.mjs` 退出码 0；编码是 AAC；峰值 ≤ -1 dBFS |
 
 `check_project.py` 覆盖 1、3、7、9 与文件完整性；2、4、5、6、8、10 需要截帧或人工看一眼。
 
 ## 参数与踩坑
 
 - 参数基线、调参顺序：`references/params.md`
-- 22 条返工原因与对应修法：`references/pitfalls.md`
+- 22 条返工原因 + 5 条成片声音排查：`references/pitfalls.md`
 - 完整命令链路、脚本职责、对齐算法：`references/pipeline.md`
 
 ## 修改这个技能自身
@@ -213,3 +243,5 @@ python3 tests/smoke.py --images ~/videos/xxx/scenes   # 动过 trace_paths 或�
 - 不要按字数比例分配字幕时间。
 - 不要用 `text-overflow:ellipsis` 显示文件路径。
 - 不要在鸿蒙上折腾 ffmpeg 静态二进制（签名后 segfault），直接走浏览器内录。
+- 不要凭"听起来像"去改声音。没有 `probe_audio` 的 FAIL 项做依据，改电平 / 改容器 / 换播放器都是白改。
+- 不要交 Opus-in-MP4 给非 Chrome 用户；也不要用"预览页正常"证明文件正常。

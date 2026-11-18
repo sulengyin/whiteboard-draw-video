@@ -84,7 +84,7 @@ def main():
         if f.is_file() and f.suffix in (".py", ".js", ".mjs"):
             shutil.copy2(f, root / "build" / f.name)
 
-    # 依赖（jpeg-js / pngjs / mpg123-decoder 及传递依赖，约 1.2MB）
+    # 依赖（jpeg-js / pngjs / mpg123-decoder + AAC 转码链路，约 13MB）
     # 工程自带一份，脚本在任意目录都能跑，不用再 npm i；L3 清理时一起删掉。
     nm = SKILL / "node_modules"
     if nm.is_dir() and not (root / "node_modules").exists():
