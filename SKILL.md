@@ -142,8 +142,12 @@ python3 <skill>/scripts/check_project.py --root .
   （49 秒的片子写成 0.04 秒）。播放器随便吃中一条就会出杂音或对不上。
   `serve.py` 收片时自动调 `build/retime_mp4.py`；绕过 serve 直接落盘就手动跑一遍：
   `python3 build/retime_mp4.py out/xxx.mp4`（幂等，可重复跑，`--check` 只体检）。
-- **备一个 WebM 出口**：MP4 里 Chrome 只会塞 Opus，碰上不认 Opus-in-MP4 的播放器只能换封装。
-  页面上的「导出 WebM」走原生 VP9+Opus，容器和时长都规整，拿来判断问题在文件还是在播放器。
+- **交付前转 AAC**：MP4 里 Chrome 只会塞 Opus，Windows 媒体播放器 / 手机自带播放器 / 微信
+  解 Opus 经常出一层"沙沙"底噪（内容本身是干净的）。交付版本一律再跑一条：
+  `node build/to_aac.mjs out/xxx.mp4`（约 3 秒，视频轨直接拷贝，只重编音轨到 AAC 192k，
+  输出 `out/xxx-aac.mp4`）。幂等：没有 Opus 轨就直接跳过。
+- **备一个 WebM 出口**：不认 Opus 的播放器也可以导 WebM（VP9+Opus 原生复用）交叉验证，
+  页面上的「导出 WebM」就是干这个的。
 
 ### 7. 收尾（避免工程长期占地方）
 

@@ -81,7 +81,7 @@ def main():
     # 字幕对齐链路（ASR 锚点 → 切块 → SRT → 体检），随工程走，脚本按 build/ 上级找根
     (root / "build" / "asr").mkdir(parents=True, exist_ok=True)
     for f in sorted((SKILL / "assets" / "pipeline").iterdir()):
-        if f.is_file() and f.suffix in (".py", ".js"):
+        if f.is_file() and f.suffix in (".py", ".js", ".mjs"):
             shutil.copy2(f, root / "build" / f.name)
 
     # 依赖（jpeg-js / pngjs / mpg123-decoder 及传递依赖，约 1.2MB）

@@ -2,6 +2,24 @@
 
 版本号规则：改数据契约或调用方式 → major；新增能力 → minor；修问题、改文档 → patch。
 
+## [1.2.4] - 2026-11-18
+
+### 新增
+
+- `assets/pipeline/to_aac.mjs`：把成片从「MP4 + Opus」转成「MP4 + AAC」。视频轨原样拷贝，
+  只重编音轨（AAC-LC 192k / 48k），2.8 秒转完 50 秒的片子。
+  链路全 wasm，不依赖系统 ffmpeg：mp4box 拆包 → opus-decoder 解码 → mediabunny 复制视频轨
+  并重新封装 → `@mediabunny/aac-encoder`（ffmpeg 的 AAC 编码器）编码。
+- 依赖随技能自带（mediabunny / @mediabunny/aac-encoder / mp4box / opus-decoder，约 12MB，
+  已剔除 src、bundles、sourcemap）。
+- 交付规则：不认 Opus-in-MP4 的播放器（Windows 媒体播放器、手机自带、微信）一律交 `-aac.mp4`。
+
+### 背景
+
+- 排查结论：成片音轨逐段与源配音互相关 0.98~0.99、峰值 -1 dB、无削波无掉块、8k 以上 -85 dB，
+  内容没问题；容器时长也已修好。剩下的"沙沙"是播放器解 Opus 时产生的，只能换编码。
+- 鸿蒙上 ffmpeg 二进制（4.1.4 / 7.0.2 静态 arm64，签名后）一律 SIGSEGV，AAC 只能走 wasm。
+
 ## [1.2.3] - 2026-11-18
 
 ### 修复
