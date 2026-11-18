@@ -17,6 +17,7 @@ L1 之后工程仍可直接重录；L2 之后要重做配音和字幕对齐；L3
 「最新」优先认 `-aac.mp4`（交付版），不会被重录留下的录制版抢走。
 """
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -117,6 +118,14 @@ def collect(root: Path, level: int, keep: int):
     return items
 
 
+def md5_of(p: Path) -> str:
+    h = hashlib.md5()
+    with p.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def report(root: Path, level: int, keep: int, dry: bool, archive: Path | None):
     total_before = du(root)
     print(f"工程：{root}")
@@ -140,14 +149,25 @@ def report(root: Path, level: int, keep: int, dry: bool, archive: Path | None):
             return
         archive.mkdir(parents=True, exist_ok=True)
         target = archive / latest.name
-        if target.exists() and target.stat().st_size == latest.stat().st_size:
-            latest.unlink()
-            print(f"归档位置已有同尺寸文件，直接删本地：{target}")
+        # 先复制、校验、再删工程。反过来（move 后 rmtree）一旦删工程被权限拦住，
+        # 就成了"成片已挪走、工程还在、out/ 为空"，重跑会被判定没有成片而卡死。
+        same = (target.exists()
+                and target.stat().st_size == latest.stat().st_size
+                and md5_of(target) == md5_of(latest))
+        if same:
+            print(f"归档位置已有同一文件：{target}")
         else:
-            shutil.move(str(latest), str(target))
+            shutil.copy2(latest, target)
+            if target.stat().st_size != latest.stat().st_size:
+                sys.exit(f"复制后大小不一致，已中止，工程保持原样：{target}")
             print(f"成片已归档：{target}")
-        shutil.rmtree(root)
-        print(f"工程已删除，释放 {human(total_before - du(target))}（成片留在归档目录）")
+        try:
+            shutil.rmtree(root)
+        except OSError as e:
+            sys.exit(f"成片已安全归档在 {target}，但工程删除失败：{e}\n"
+                     f"处理完权限后重跑本命令即可，不会重复复制。")
+        print(f"工程已删除，释放 {human(total_before)}"
+              f"（成片 {human(du(target))} 已留在归档目录）")
         return
 
     items = collect(root, level, keep)
